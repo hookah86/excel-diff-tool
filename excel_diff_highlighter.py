@@ -434,6 +434,13 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
             for col in range(1, new_sheet.max_column + 1):
                 old_cell = old_sheet.cell(row, col)
                 new_cell = new_sheet.cell(row, col)
+                
+                # 結合セルの処理
+                from openpyxl.cell.cell import MergedCell
+                if isinstance(new_cell, MergedCell):
+                    # 結合セルはスキップ（マスターセルのみ処理される）
+                    processed_cells += 1
+                    continue
 
                 old_value = get_cell_value_as_string(old_cell)
                 new_value = get_cell_value_as_string(new_cell)
@@ -623,11 +630,29 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
         .file-accordion .accordion-button {{
             background-color: var(--bg-secondary);
             color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }}
         
         .file-accordion .accordion-button:not(.collapsed) {{
             background-color: #0d6efd;
             color: white;
+        }}
+        
+        .file-name-text {{
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        
+        .badge-group {{
+            display: flex;
+            gap: 0.25rem;
+            margin-left: auto;
+            flex-shrink: 0;
         }}
         
         .diff-table {{
@@ -800,11 +825,20 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
         <!-- フィルタ・検索セクション -->
         <div class="filter-section mb-3 no-print">
             <div class="row g-3">
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <input type="text" class="form-control" id="searchInput" 
                            placeholder="🔍 差分内容を検索...">
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-2">
+                    <select class="form-select" id="sortSelect">
+                        <option value="name-asc">ファイル名 (昇順)</option>
+                        <option value="name-desc">ファイル名 (降順)</option>
+                        <option value="diff-desc">差分数 (多い順)</option>
+                        <option value="diff-asc">差分数 (少ない順)</option>
+                        <option value="original">元の順序</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
                     <select class="form-select" id="fileFilter">
                         <option value="">すべてのファイル</option>
                         {generate_file_filter_options(all_results)}
@@ -957,6 +991,43 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
         document.getElementById('fileFilter').addEventListener('change', filterResults);
         document.getElementById('sheetFilter').addEventListener('change', filterResults);
         
+        // ソート機能
+        document.getElementById('sortSelect').addEventListener('change', function() {{
+            sortAccordionItems(this.value);
+        }});
+        
+        function sortAccordionItems(sortType) {{
+            const accordion = document.getElementById('diffAccordion');
+            const items = Array.from(accordion.querySelectorAll('.accordion-item'));
+            
+            items.sort((a, b) => {{
+                const nameA = a.dataset.fileName || '';
+                const nameB = b.dataset.fileName || '';
+                const diffA = parseInt(a.dataset.diffCount) || 0;
+                const diffB = parseInt(b.dataset.diffCount) || 0;
+                const orderA = parseInt(a.dataset.originalOrder) || 0;
+                const orderB = parseInt(b.dataset.originalOrder) || 0;
+                
+                switch(sortType) {{
+                    case 'name-asc':
+                        return nameA.localeCompare(nameB, 'ja');
+                    case 'name-desc':
+                        return nameB.localeCompare(nameA, 'ja');
+                    case 'diff-desc':
+                        return diffB - diffA;
+                    case 'diff-asc':
+                        return diffA - diffB;
+                    case 'original':
+                        return orderA - orderB;
+                    default:
+                        return 0;
+                }}
+            }});
+            
+            // アコーディオンを再構築
+            items.forEach(item => accordion.appendChild(item));
+        }}
+        
         function filterResults() {{
             const searchText = document.getElementById('searchInput').value.toLowerCase();
             const selectedFile = document.getElementById('fileFilter').value;
@@ -1006,6 +1077,8 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
             document.getElementById('searchInput').value = '';
             document.getElementById('fileFilter').value = '';
             document.getElementById('sheetFilter').value = '';
+            document.getElementById('sortSelect').value = 'name-asc';
+            sortAccordionItems('name-asc');
             filterResults();
         }}
     </script>
@@ -1051,55 +1124,97 @@ def generate_accordion_items(all_results: List[Dict]) -> str:
         file_name = html.escape(result['base_name'])
         changes = result['changes']
         change_count = len(changes)
+        status = result.get('status', 'success')
         
-        if change_count == 0:
-            badge_class = 'bg-success'
+        # 種類別カウント
+        insert_count = sum(1 for c in changes if c.get('type') == 'insert')
+        delete_count = sum(1 for c in changes if c.get('type') == 'delete')
+        replace_count = sum(1 for c in changes if c.get('type') == 'replace')
+        
+        # ステータスに応じてバッジとアイコンを設定
+        if status == 'error':
+            icon = 'x-circle'
+            badge_html = '<span class="badge bg-danger">エラー</span>'
+        elif change_count == 0:
             icon = 'check-circle'
+            badge_html = '<span class="badge bg-success">差分なし</span>'
         else:
-            badge_class = 'bg-warning'
             icon = 'exclamation-triangle'
+            # 種類別バッジを生成
+            badges = []
+            badges.append(f'<span class="badge bg-warning">{change_count}件</span>')
+            if insert_count > 0:
+                badges.append(f'<span class="badge badge-insert">{insert_count}追加</span>')
+            if delete_count > 0:
+                badges.append(f'<span class="badge badge-delete">{delete_count}削除</span>')
+            if replace_count > 0:
+                badges.append(f'<span class="badge badge-replace">{replace_count}変更</span>')
+            badge_html = ''.join(badges)
         
-        # テーブル行を生成
-        table_rows = []
-        for idx, change in enumerate(changes, 1):
-            sheet = html.escape(change['sheet'])
-            cell = html.escape(change['cell'])
-            old_val = html.escape(change['old'])
-            new_val = html.escape(change['new'])
-            diff_type = change.get('type', 'replace')
-            
-            # 差分タイプに応じたバッジとクラス
-            if diff_type == 'insert':
-                type_badge = '<span class="badge badge-insert">追加</span>'
-                row_class = 'diff-type-insert'
-            elif diff_type == 'delete':
-                type_badge = '<span class="badge badge-delete">削除</span>'
-                row_class = 'diff-type-delete'
-            else:
-                type_badge = '<span class="badge badge-replace">変更</span>'
-                row_class = 'diff-type-replace'
-            
-            table_rows.append(f'''
-                <tr data-sheet="{sheet}" class="{row_class}">
-                    <td>{idx}</td>
-                    <td><span class="badge bg-secondary">{sheet}</span></td>
-                    <td><code>{cell}</code></td>
-                    <td class="diff-old">{old_val}</td>
-                    <td class="diff-new">{new_val}</td>
-                    <td>{type_badge}</td>
+        # エラーの場合はエラー情報を表示
+        if status == 'error':
+            error_message = html.escape(result.get('error', '不明なエラー'))
+            tables_html = f'''
+                <tr>
+                    <td colspan="6">
+                        <div class="alert alert-danger" role="alert">
+                            <h6 class="alert-heading">
+                                <i class="bi bi-exclamation-octagon"></i> エラーが発生しました
+                            </h6>
+                            <hr>
+                            <p class="mb-0"><strong>エラー内容:</strong></p>
+                            <pre class="mt-2 mb-0" style="background-color: #f8d7da; padding: 1rem; border-radius: 0.25rem; font-size: 0.85rem; color: #842029;">{error_message}</pre>
+                            <hr>
+                            <small class="text-muted">
+                                <strong>旧ファイル:</strong> {html.escape(result.get('old_file', 'N/A'))}<br>
+                                <strong>新ファイル:</strong> {html.escape(result.get('new_file', 'N/A'))}
+                            </small>
+                        </div>
+                    </td>
                 </tr>
-            ''')
-        
-        tables_html = '\n'.join(table_rows) if table_rows else '<tr><td colspan="6" class="text-center text-muted">差分なし</td></tr>'
+            '''
+        else:
+            # テーブル行を生成
+            table_rows = []
+            for idx, change in enumerate(changes, 1):
+                sheet = html.escape(change['sheet'])
+                cell = html.escape(change['cell'])
+                old_val = html.escape(change['old'])
+                new_val = html.escape(change['new'])
+                diff_type = change.get('type', 'replace')
+                
+                # 差分タイプに応じたバッジとクラス
+                if diff_type == 'insert':
+                    type_badge = '<span class="badge badge-insert">追加</span>'
+                    row_class = 'diff-type-insert'
+                elif diff_type == 'delete':
+                    type_badge = '<span class="badge badge-delete">削除</span>'
+                    row_class = 'diff-type-delete'
+                else:
+                    type_badge = '<span class="badge badge-replace">変更</span>'
+                    row_class = 'diff-type-replace'
+                
+                table_rows.append(f'''
+                    <tr data-sheet="{sheet}" class="{row_class}">
+                        <td>{idx}</td>
+                        <td><span class="badge bg-secondary">{sheet}</span></td>
+                        <td><code>{cell}</code></td>
+                        <td class="diff-old">{old_val}</td>
+                        <td class="diff-new">{new_val}</td>
+                        <td>{type_badge}</td>
+                    </tr>
+                ''')
+            
+            tables_html = '\n'.join(table_rows) if table_rows else '<tr><td colspan="6" class="text-center text-muted">差分なし</td></tr>'
         
         item_html = f'''
-            <div class="accordion-item" data-file-name="{file_name}">
+            <div class="accordion-item" data-file-name="{file_name}" data-diff-count="{change_count}" data-original-order="{i}">
                 <h2 class="accordion-header">
                     <button class="accordion-button collapsed" type="button" 
                             data-bs-toggle="collapse" data-bs-target="#collapse{i}">
                         <i class="bi bi-{icon} me-2"></i>
-                        {file_name}
-                        <span class="badge {badge_class} ms-auto me-2">{change_count}件</span>
+                        <span class="file-name-text">{file_name}</span>
+                        <span class="badge-group">{badge_html}</span>
                     </button>
                 </h2>
                 <div id="collapse{i}" class="accordion-collapse collapse" 
