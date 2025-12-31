@@ -10,7 +10,10 @@ import difflib
 import re
 import time
 from pathlib import Path
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Dict
+from datetime import datetime
+import html
+import json
 
 # 設定
 MAX_CELL_VALUE_LENGTH = 100  # 差分サマリーシートに表示するセル値の最大文字数
@@ -42,6 +45,9 @@ SUMMARY_COL_WIDTH_NO = 8       # No.列の幅
 SUMMARY_COL_WIDTH_SHEET = 25   # シート名列の幅
 SUMMARY_COL_WIDTH_CELL = 10    # セル列の幅
 SUMMARY_COL_WIDTH_VALUE = 40   # 旧値/新値列の幅
+
+# HTMLレポート設定
+HTML_REPORT_SUFFIX = "_差分レポート"  # HTMLレポートファイル名のサフィックス
 
 
 def find_file_by_pattern(directory: str, pattern: str) -> List[Path]:
@@ -232,27 +238,45 @@ def get_cell_value_as_string(cell) -> str:
     return str(cell.value)
 
 
-def find_char_differences(old_text: str, new_text: str) -> List[Tuple[int, int]]:
+def find_char_differences(old_text: str, new_text: str) -> Tuple[List[Tuple[int, int]], str]:
     """
     2つのテキスト間の文字レベルの差分を検出
-    戻り値: [(start_index, end_index), ...] 差分がある文字の範囲リスト
+    戻り値: ([(start_index, end_index), ...], diff_type)
+        diff_type: 'insert'(追加), 'delete'(削除), 'replace'(変更), 'equal'(同一)
     """
     if old_text == new_text:
-        return []
+        return [], 'equal'
 
     # 文字レベルでの差分を検出
     matcher = difflib.SequenceMatcher(None, old_text, new_text)
     differences = []
+    diff_types = set()
 
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag in ('replace', 'insert'):
-            # 新しいテキスト側の変更された部分
+        if tag == 'insert':
+            # 追加された部分
             differences.append((j1, j2))
+            diff_types.add('insert')
+        elif tag == 'delete':
+            # 削除された部分（新テキストには存在しない）
+            diff_types.add('delete')
+        elif tag == 'replace':
+            # 置き換えられた部分
+            differences.append((j1, j2))
+            diff_types.add('replace')
 
-    return differences
+    # 差分タイプを決定（優先順位: replace > insert > delete）
+    if 'replace' in diff_types:
+        return differences, 'replace'
+    elif 'insert' in diff_types:
+        return differences, 'insert'
+    elif 'delete' in diff_types:
+        return differences, 'delete'
+    else:
+        return differences, 'equal'
 
 
-def apply_blue_color_to_differences(cell, old_text: str, new_text: str, highlight_color: str = DEFAULT_HIGHLIGHT_COLOR):
+def apply_blue_color_to_differences(cell, old_text: str, new_text: str, highlight_color: str = DEFAULT_HIGHLIGHT_COLOR) -> str:
     """
     差分がある文字のみを指定色にする
 
@@ -261,11 +285,14 @@ def apply_blue_color_to_differences(cell, old_text: str, new_text: str, highligh
         old_text: 旧テキスト
         new_text: 新テキスト
         highlight_color: ハイライト色（aRGB形式の16進数）
+    
+    Returns:
+        diff_type: 差分タイプ ('insert', 'delete', 'replace', 'equal')
     """
-    differences = find_char_differences(old_text, new_text)
+    differences, diff_type = find_char_differences(old_text, new_text)
 
     if not differences:
-        return
+        return diff_type
 
     # 元のセルのフォント情報を取得
     original_font = cell.font
@@ -343,9 +370,11 @@ def apply_blue_color_to_differences(cell, old_text: str, new_text: str, highligh
     # セルにRichTextを設定
     if rich_text_parts:
         cell.value = CellRichText(*rich_text_parts)
+    
+    return diff_type
 
 
-def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_file_path: str, highlight_color: str = DEFAULT_HIGHLIGHT_COLOR, compare_formulas: bool = False):
+def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_file_path: str, highlight_color: str = DEFAULT_HIGHLIGHT_COLOR, compare_formulas: bool = False) -> List[Dict]:
     """
     2つのExcelファイルを比較し、差分を指定色でハイライト
 
@@ -355,6 +384,9 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
         output_file_path: 出力ファイルのパス
         highlight_color: ハイライト色（aRGB形式の16進数、デフォルトは青）
         compare_formulas: Trueの場合は数式を比較、Falseの場合は表示値を比較
+    
+    Returns:
+        changes_log: 変更履歴のリスト
     """
     print(f"\n処理開始...")
     print(f"古いファイル: {old_file_path}")
@@ -412,8 +444,14 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
                     continue
 
                 # 差分がある場合
-                if old_value != new_value and new_value:
-                    apply_blue_color_to_differences(new_cell, old_value, new_value, highlight_color)
+                if old_value != new_value:
+                    diff_type = 'equal'
+                    if new_value:
+                        diff_type = apply_blue_color_to_differences(new_cell, old_value, new_value, highlight_color)
+                    elif old_value:
+                        # 新値が空の場合は削除
+                        diff_type = 'delete'
+                    
                     sheet_changes += 1
 
                     # 変更履歴を記録
@@ -421,7 +459,8 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
                         'sheet': sheet_name,
                         'cell': f'{new_cell.column_letter}{new_cell.row}',
                         'old': old_value[:MAX_CELL_VALUE_LENGTH] + ('...' if len(old_value) > MAX_CELL_VALUE_LENGTH else ''),
-                        'new': new_value[:MAX_CELL_VALUE_LENGTH] + ('...' if len(new_value) > MAX_CELL_VALUE_LENGTH else '')
+                        'new': new_value[:MAX_CELL_VALUE_LENGTH] + ('...' if len(new_value) > MAX_CELL_VALUE_LENGTH else ''),
+                        'type': diff_type
                     })
 
                 # 進行状況を表示（10%刻み）
@@ -486,6 +525,610 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
 
     old_wb.close()
     new_wb.close()
+    
+    return changes_log
+
+
+def generate_html_report(all_results: List[Dict], output_path: str, color_name: str, mode_name: str, total_time: float):
+    """
+    差分結果からHTMLレポートを生成
+
+    Args:
+        all_results: 全ファイルの差分結果リスト
+        output_path: 出力先パス
+        color_name: 使用したハイライト色名
+        mode_name: 比較モード名
+        total_time: 総処理時間
+    """
+    # 統計情報を計算
+    total_files = len(all_results)
+    total_changes = sum(len(result['changes']) for result in all_results)
+    success_files = sum(1 for result in all_results if result['status'] == 'success')
+    error_files = total_files - success_files
+    
+    # シート別統計
+    sheet_stats = {}
+    for result in all_results:
+        for change in result['changes']:
+            sheet_name = change['sheet']
+            if sheet_name not in sheet_stats:
+                sheet_stats[sheet_name] = 0
+            sheet_stats[sheet_name] += 1
+    
+    # ファイル別統計（グラフ用）
+    file_stats = [(result['base_name'], len(result['changes'])) for result in all_results]
+    
+    # 現在時刻
+    generated_time = datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')
+    
+    # HTMLテンプレート
+    html_content = f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel差分レポート</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        :root {{
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8f9fa;
+            --text-primary: #212529;
+            --text-secondary: #6c757d;
+            --border-color: #dee2e6;
+            --diff-old: #ffe5e5;
+            --diff-new: #e5f5ff;
+        }}
+        
+        [data-bs-theme="dark"] {{
+            --bg-primary: #1a1d20;
+            --bg-secondary: #2b3035;
+            --text-primary: #e9ecef;
+            --text-secondary: #adb5bd;
+            --border-color: #495057;
+            --diff-old: #4a2020;
+            --diff-new: #1a3a4a;
+        }}
+        
+        body {{
+            background-color: var(--bg-secondary);
+            color: var(--text-primary);
+            transition: background-color 0.3s, color 0.3s;
+        }}
+        
+        .card {{
+            background-color: var(--bg-primary);
+            border-color: var(--border-color);
+            margin-bottom: 1.5rem;
+        }}
+        
+        .stat-card {{
+            border-left: 4px solid #0d6efd;
+        }}
+        
+        .stat-card.success {{
+            border-left-color: #198754;
+        }}
+        
+        .stat-card.warning {{
+            border-left-color: #ffc107;
+        }}
+        
+        .stat-card.danger {{
+            border-left-color: #dc3545;
+        }}
+        
+        .file-accordion .accordion-button {{
+            background-color: var(--bg-secondary);
+            color: var(--text-primary);
+        }}
+        
+        .file-accordion .accordion-button:not(.collapsed) {{
+            background-color: #0d6efd;
+            color: white;
+        }}
+        
+        .diff-table {{
+            font-size: 0.9rem;
+        }}
+        
+        .diff-old {{
+            background-color: var(--diff-old);
+        }}
+        
+        .diff-new {{
+            background-color: var(--diff-new);
+        }}
+        
+        .badge-custom {{
+            font-size: 0.75rem;
+            padding: 0.35em 0.65em;
+        }}
+        
+        .badge-insert {{
+            background-color: #198754;
+            color: #ffffff;
+            font-weight: bold;
+            padding: 0.35em 0.65em;
+            border-radius: 0.25rem;
+        }}
+        
+        .badge-delete {{
+            background-color: #dc3545;
+            color: #ffffff;
+            font-weight: bold;
+            padding: 0.35em 0.65em;
+            border-radius: 0.25rem;
+        }}
+        
+        .badge-replace {{
+            background-color: #0d6efd;
+            color: #ffffff;
+            font-weight: bold;
+            padding: 0.35em 0.65em;
+            border-radius: 0.25rem;
+        }}
+        
+        .search-highlight {{
+            background-color: yellow;
+            color: black;
+            font-weight: bold;
+        }}
+        
+        .filter-section {{
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            background-color: var(--bg-primary);
+            padding: 1rem;
+            border-bottom: 2px solid var(--border-color);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        
+        .chart-container {{
+            position: relative;
+            height: 300px;
+        }}
+        
+        @media print {{
+            .filter-section, .no-print {{
+                display: none;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">
+                <i class="bi bi-file-earmark-diff"></i> Excel差分レポート
+            </span>
+            <div class="d-flex">
+                <button class="btn btn-outline-light me-2" onclick="toggleDarkMode()">
+                    <i class="bi bi-moon-stars"></i>
+                </button>
+                <button class="btn btn-outline-light" onclick="window.print()">
+                    <i class="bi bi-printer"></i> 印刷
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <!-- サマリーセクション -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <i class="bi bi-info-circle"></i> 処理サマリー
+                        </h5>
+                        <p class="text-muted mb-3">
+                            生成日時: {generated_time}<br>
+                            ハイライト色: {html.escape(color_name)} | 比較モード: {html.escape(mode_name)}
+                        </p>
+                        <div class="row">
+                            <div class="col-md-3">
+                                <div class="card stat-card">
+                                    <div class="card-body text-center">
+                                        <h3 class="mb-0">{total_files}</h3>
+                                        <small class="text-muted">処理ファイル数</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card stat-card warning">
+                                    <div class="card-body text-center">
+                                        <h3 class="mb-0">{total_changes}</h3>
+                                        <small class="text-muted">総差分数</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card stat-card success">
+                                    <div class="card-body text-center">
+                                        <h3 class="mb-0">{success_files}</h3>
+                                        <small class="text-muted">成功</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card stat-card {'danger' if error_files > 0 else ''}">
+                                    <div class="card-body text-center">
+                                        <h3 class="mb-0">{error_files}</h3>
+                                        <small class="text-muted">エラー</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-3 text-center">
+                            <small class="text-muted">
+                                <i class="bi bi-clock"></i> 処理時間: {total_time:.1f}秒
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- グラフセクション -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h6 class="card-title">ファイル別差分数</h6>
+                        <div class="chart-container">
+                            <canvas id="fileChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h6 class="card-title">シート別差分数</h6>
+                        <div class="chart-container">
+                            <canvas id="sheetChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- フィルタ・検索セクション -->
+        <div class="filter-section mb-3 no-print">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <input type="text" class="form-control" id="searchInput" 
+                           placeholder="🔍 差分内容を検索...">
+                </div>
+                <div class="col-md-3">
+                    <select class="form-select" id="fileFilter">
+                        <option value="">すべてのファイル</option>
+                        {generate_file_filter_options(all_results)}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <select class="form-select" id="sheetFilter">
+                        <option value="">すべてのシート</option>
+                        {generate_sheet_filter_options(all_results)}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-secondary w-100" onclick="resetFilters()">
+                        <i class="bi bi-arrow-counterclockwise"></i> リセット
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 差分詳細セクション -->
+        <div class="accordion file-accordion" id="diffAccordion">
+            {generate_accordion_items(all_results)}
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // ダークモード切り替え
+        function toggleDarkMode() {{
+            const html = document.documentElement;
+            const currentTheme = html.getAttribute('data-bs-theme');
+            html.setAttribute('data-bs-theme', currentTheme === 'dark' ? 'light' : 'dark');
+            localStorage.setItem('theme', currentTheme === 'dark' ? 'light' : 'dark');
+            updateCharts();
+        }}
+        
+        // テーマの復元
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-bs-theme', savedTheme);
+        
+        // グラフデータ
+        const fileData = {json.dumps(file_stats)};
+        const sheetData = {json.dumps(list(sheet_stats.items()))};
+        
+        let fileChart, sheetChart;
+        
+        function getChartColors() {{
+            const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+            return {{
+                textColor: isDark ? '#e9ecef' : '#212529',
+                gridColor: isDark ? '#495057' : '#dee2e6'
+            }};
+        }}
+        
+        function updateCharts() {{
+            const colors = getChartColors();
+            
+            if (fileChart) {{
+                fileChart.options.scales.y.ticks.color = colors.textColor;
+                fileChart.options.scales.y.grid.color = colors.gridColor;
+                fileChart.options.scales.x.ticks.color = colors.textColor;
+                fileChart.options.scales.x.grid.color = colors.gridColor;
+                fileChart.options.plugins.legend.labels.color = colors.textColor;
+                fileChart.update();
+            }}
+            
+            if (sheetChart) {{
+                sheetChart.options.plugins.legend.labels.color = colors.textColor;
+                sheetChart.update();
+            }}
+        }}
+        
+        // ファイル別グラフ
+        const fileCtx = document.getElementById('fileChart').getContext('2d');
+        fileChart = new Chart(fileCtx, {{
+            type: 'bar',
+            data: {{
+                labels: fileData.map(d => d[0]),
+                datasets: [{{
+                    label: '差分数',
+                    data: fileData.map(d => d[1]),
+                    backgroundColor: 'rgba(13, 110, 253, 0.5)',
+                    borderColor: 'rgba(13, 110, 253, 1)',
+                    borderWidth: 1
+                }}]
+            }},
+            options: {{
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {{
+                    y: {{
+                        beginAtZero: true,
+                        ticks: {{ color: getChartColors().textColor }},
+                        grid: {{ color: getChartColors().gridColor }}
+                    }},
+                    x: {{
+                        ticks: {{ 
+                            color: getChartColors().textColor,
+                            maxRotation: 45,
+                            minRotation: 45
+                        }},
+                        grid: {{ color: getChartColors().gridColor }}
+                    }}
+                }},
+                plugins: {{
+                    legend: {{
+                        labels: {{ color: getChartColors().textColor }}
+                    }}
+                }}
+            }}
+        }});
+        
+        // シート別グラフ
+        const sheetCtx = document.getElementById('sheetChart').getContext('2d');
+        sheetChart = new Chart(sheetCtx, {{
+            type: 'doughnut',
+            data: {{
+                labels: sheetData.map(d => d[0]),
+                datasets: [{{
+                    data: sheetData.map(d => d[1]),
+                    backgroundColor: [
+                        'rgba(13, 110, 253, 0.7)',
+                        'rgba(25, 135, 84, 0.7)',
+                        'rgba(255, 193, 7, 0.7)',
+                        'rgba(220, 53, 69, 0.7)',
+                        'rgba(108, 117, 125, 0.7)',
+                        'rgba(13, 202, 240, 0.7)'
+                    ]
+                }}]
+            }},
+            options: {{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {{
+                    legend: {{
+                        position: 'right',
+                        labels: {{ color: getChartColors().textColor }}
+                    }}
+                }}
+            }}
+        }});
+        
+        // 検索機能
+        document.getElementById('searchInput').addEventListener('input', function() {{
+            const searchText = this.value.toLowerCase();
+            filterResults();
+        }});
+        
+        // フィルタ機能
+        document.getElementById('fileFilter').addEventListener('change', filterResults);
+        document.getElementById('sheetFilter').addEventListener('change', filterResults);
+        
+        function filterResults() {{
+            const searchText = document.getElementById('searchInput').value.toLowerCase();
+            const selectedFile = document.getElementById('fileFilter').value;
+            const selectedSheet = document.getElementById('sheetFilter').value;
+            
+            document.querySelectorAll('.accordion-item').forEach(item => {{
+                const fileName = item.dataset.fileName;
+                let visible = true;
+                
+                // ファイルフィルタ
+                if (selectedFile && fileName !== selectedFile) {{
+                    visible = false;
+                }}
+                
+                // シート・検索フィルタ
+                if (visible && (selectedSheet || searchText)) {{
+                    const rows = item.querySelectorAll('tbody tr');
+                    let hasVisibleRow = false;
+                    
+                    rows.forEach(row => {{
+                        const sheetName = row.dataset.sheet;
+                        const oldValue = row.cells[3].textContent.toLowerCase();
+                        const newValue = row.cells[4].textContent.toLowerCase();
+                        
+                        let rowVisible = true;
+                        
+                        if (selectedSheet && sheetName !== selectedSheet) {{
+                            rowVisible = false;
+                        }}
+                        
+                        if (searchText && !oldValue.includes(searchText) && !newValue.includes(searchText)) {{
+                            rowVisible = false;
+                        }}
+                        
+                        row.style.display = rowVisible ? '' : 'none';
+                        if (rowVisible) hasVisibleRow = true;
+                    }});
+                    
+                    visible = hasVisibleRow;
+                }}
+                
+                item.style.display = visible ? '' : 'none';
+            }});
+        }}
+        
+        function resetFilters() {{
+            document.getElementById('searchInput').value = '';
+            document.getElementById('fileFilter').value = '';
+            document.getElementById('sheetFilter').value = '';
+            filterResults();
+        }}
+    </script>
+</body>
+</html>"""
+    
+    # HTMLファイルを保存
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    
+    print(f"\nHTMLレポートを生成しました: {output_path}")
+
+
+def generate_file_filter_options(all_results: List[Dict]) -> str:
+    """ファイルフィルタのオプションを生成"""
+    options = []
+    for result in all_results:
+        if result['changes']:
+            name = html.escape(result['base_name'])
+            options.append(f'<option value="{name}">{name}</option>')
+    return '\n'.join(options)
+
+
+def generate_sheet_filter_options(all_results: List[Dict]) -> str:
+    """シートフィルタのオプションを生成"""
+    sheets = set()
+    for result in all_results:
+        for change in result['changes']:
+            sheets.add(change['sheet'])
+    
+    options = []
+    for sheet in sorted(sheets):
+        name = html.escape(sheet)
+        options.append(f'<option value="{name}">{name}</option>')
+    return '\n'.join(options)
+
+
+def generate_accordion_items(all_results: List[Dict]) -> str:
+    """差分詳細のアコーディオンアイテムを生成"""
+    items = []
+    
+    for i, result in enumerate(all_results):
+        file_name = html.escape(result['base_name'])
+        changes = result['changes']
+        change_count = len(changes)
+        
+        if change_count == 0:
+            badge_class = 'bg-success'
+            icon = 'check-circle'
+        else:
+            badge_class = 'bg-warning'
+            icon = 'exclamation-triangle'
+        
+        # テーブル行を生成
+        table_rows = []
+        for idx, change in enumerate(changes, 1):
+            sheet = html.escape(change['sheet'])
+            cell = html.escape(change['cell'])
+            old_val = html.escape(change['old'])
+            new_val = html.escape(change['new'])
+            diff_type = change.get('type', 'replace')
+            
+            # 差分タイプに応じたバッジとクラス
+            if diff_type == 'insert':
+                type_badge = '<span class="badge badge-insert">追加</span>'
+                row_class = 'diff-type-insert'
+            elif diff_type == 'delete':
+                type_badge = '<span class="badge badge-delete">削除</span>'
+                row_class = 'diff-type-delete'
+            else:
+                type_badge = '<span class="badge badge-replace">変更</span>'
+                row_class = 'diff-type-replace'
+            
+            table_rows.append(f'''
+                <tr data-sheet="{sheet}" class="{row_class}">
+                    <td>{idx}</td>
+                    <td><span class="badge bg-secondary">{sheet}</span></td>
+                    <td><code>{cell}</code></td>
+                    <td class="diff-old">{old_val}</td>
+                    <td class="diff-new">{new_val}</td>
+                    <td>{type_badge}</td>
+                </tr>
+            ''')
+        
+        tables_html = '\n'.join(table_rows) if table_rows else '<tr><td colspan="6" class="text-center text-muted">差分なし</td></tr>'
+        
+        item_html = f'''
+            <div class="accordion-item" data-file-name="{file_name}">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" 
+                            data-bs-toggle="collapse" data-bs-target="#collapse{i}">
+                        <i class="bi bi-{icon} me-2"></i>
+                        {file_name}
+                        <span class="badge {badge_class} ms-auto me-2">{change_count}件</span>
+                    </button>
+                </h2>
+                <div id="collapse{i}" class="accordion-collapse collapse" 
+                     data-bs-parent="#diffAccordion">
+                    <div class="accordion-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover diff-table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width: 5%">No.</th>
+                                        <th style="width: 12%">シート</th>
+                                        <th style="width: 8%">セル</th>
+                                        <th style="width: 30%">旧値</th>
+                                        <th style="width: 30%">新値</th>
+                                        <th style="width: 10%">種類</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {tables_html}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        '''
+        items.append(item_html)
+    
+    return '\n'.join(items)
 
 
 def main():
@@ -538,6 +1181,9 @@ def main():
     if not output_directory:
         output_directory = new_directory
 
+    # 処理開始時刻を記録（全体の処理時間計測用）
+    main_start_time = time.time()
+
     # マッチングするファイルペアを検索
     file_pairs, unmatched_old_files, unmatched_new_files = find_matching_file_pairs(old_directory, new_directory)
 
@@ -580,6 +1226,7 @@ def main():
     # 比較とハイライト処理
     success_count = 0
     error_count = 0
+    all_results = []  # 全ファイルの結果を記録
 
     for i, (base_name, old_file, new_file) in enumerate(file_pairs, 1):
         try:
@@ -591,22 +1238,49 @@ def main():
             output_filename = new_file_path.stem + OUTPUT_FILE_SUFFIX + new_file_path.suffix
             output_file = str(output_path / output_filename)
 
-            compare_and_highlight_excel(old_file, new_file, output_file, highlight_color, compare_formulas)
+            changes = compare_and_highlight_excel(old_file, new_file, output_file, highlight_color, compare_formulas)
             success_count += 1
+            
+            # 結果を記録
+            all_results.append({
+                'base_name': base_name,
+                'old_file': Path(old_file).name,
+                'new_file': Path(new_file).name,
+                'output_file': output_filename,
+                'changes': changes,
+                'status': 'success'
+            })
 
         except Exception as e:
             print(f"\nエラーが発生しました: {e}")
             error_count += 1
+            all_results.append({
+                'base_name': base_name,
+                'old_file': Path(old_file).name if old_file else 'N/A',
+                'new_file': Path(new_file).name if new_file else 'N/A',
+                'output_file': 'N/A',
+                'changes': [],
+                'status': 'error',
+                'error': str(e)
+            })
             import traceback
             traceback.print_exc()
 
     # 最終結果
+    total_time = time.time() - main_start_time  # 全体の処理時間を計算
+    
     print(f"\n{'='*SEPARATOR_LENGTH}")
     print(f"処理完了")
     print(f"{'='*SEPARATOR_LENGTH}")
     print(f"成功: {success_count} ファイル")
     print(f"失敗: {error_count} ファイル")
     print(f"出力先: {output_directory}")
+
+    # HTMLレポートを生成
+    if all_results:
+        html_filename = f"diff_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+        html_path = str(output_path / html_filename)
+        generate_html_report(all_results, html_path, color_name, mode_name, total_time)
 
     # マッチングしなかったファイルの報告
     if unmatched_old_files:
