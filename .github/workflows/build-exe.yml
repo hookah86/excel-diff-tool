@@ -27,7 +27,7 @@ jobs:
     
     - name: Build EXE with PyInstaller
       run: |
-        pyinstaller --onefile --name ExcelDiffHighlighter excel_diff_highlighter/excel_diff_highlighter.py
+        pyinstaller --onefile --name ExcelDiffHighlighter excel_diff_highlighter.py
     
     - name: Upload EXE artifact
       uses: actions/upload-artifact@v4
