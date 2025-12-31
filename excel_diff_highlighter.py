@@ -50,6 +50,10 @@ SUMMARY_COL_WIDTH_VALUE = 40   # 旧値/新値列の幅
 HTML_REPORT_SUFFIX = "_差分レポート"  # HTMLレポートファイル名のサフィックス
 
 
+# ============================================================
+# ファイル検索・マッチング機能
+# ============================================================
+
 def find_file_by_pattern(directory: str, pattern: str) -> List[Path]:
     """
     ファイル名のパターンに基づいてファイルを検索
@@ -226,6 +230,10 @@ def find_old_and_new_versions(directory: str, base_filename: str) -> Tuple[Optio
     return old_file, new_file
 
 
+# ============================================================
+# Excel差分比較・ハイライト機能
+# ============================================================
+
 def get_cell_value_as_string(cell) -> str:
     """
     セルの値を文字列として取得
@@ -285,7 +293,7 @@ def apply_blue_color_to_differences(cell, old_text: str, new_text: str, highligh
         old_text: 旧テキスト
         new_text: 新テキスト
         highlight_color: ハイライト色（aRGB形式の16進数）
-    
+
     Returns:
         diff_type: 差分タイプ ('insert', 'delete', 'replace', 'equal')
     """
@@ -370,7 +378,7 @@ def apply_blue_color_to_differences(cell, old_text: str, new_text: str, highligh
     # セルにRichTextを設定
     if rich_text_parts:
         cell.value = CellRichText(*rich_text_parts)
-    
+
     return diff_type
 
 
@@ -384,7 +392,7 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
         output_file_path: 出力ファイルのパス
         highlight_color: ハイライト色（aRGB形式の16進数、デフォルトは青）
         compare_formulas: Trueの場合は数式を比較、Falseの場合は表示値を比較
-    
+
     Returns:
         changes_log: 変更履歴のリスト
     """
@@ -434,7 +442,7 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
             for col in range(1, new_sheet.max_column + 1):
                 old_cell = old_sheet.cell(row, col)
                 new_cell = new_sheet.cell(row, col)
-                
+
                 # 結合セルの処理
                 from openpyxl.cell.cell import MergedCell
                 if isinstance(new_cell, MergedCell):
@@ -458,7 +466,7 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
                     elif old_value:
                         # 新値が空の場合は削除
                         diff_type = 'delete'
-                    
+
                     sheet_changes += 1
 
                     # 変更履歴を記録
@@ -532,9 +540,13 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
 
     old_wb.close()
     new_wb.close()
-    
+
     return changes_log
 
+
+# ============================================================
+# HTMLレポート生成機能
+# ============================================================
 
 def generate_html_report(all_results: List[Dict], output_path: str, color_name: str, mode_name: str, total_time: float):
     """
@@ -552,7 +564,7 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
     total_changes = sum(len(result['changes']) for result in all_results)
     success_files = sum(1 for result in all_results if result['status'] == 'success')
     error_files = total_files - success_files
-    
+
     # シート別統計
     sheet_stats = {}
     for result in all_results:
@@ -561,13 +573,13 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
             if sheet_name not in sheet_stats:
                 sheet_stats[sheet_name] = 0
             sheet_stats[sheet_name] += 1
-    
+
     # ファイル別統計（グラフ用）
     file_stats = [(result['base_name'], len(result['changes'])) for result in all_results]
-    
+
     # 現在時刻
     generated_time = datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')
-    
+
     # HTMLテンプレート
     html_content = f"""<!DOCTYPE html>
 <html lang="ja">
@@ -588,7 +600,7 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
             --diff-old: #ffe5e5;
             --diff-new: #e5f5ff;
         }}
-        
+
         [data-bs-theme="dark"] {{
             --bg-primary: #1a1d20;
             --bg-secondary: #2b3035;
@@ -598,35 +610,35 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
             --diff-old: #4a2020;
             --diff-new: #1a3a4a;
         }}
-        
+
         body {{
             background-color: var(--bg-secondary);
             color: var(--text-primary);
             transition: background-color 0.3s, color 0.3s;
         }}
-        
+
         .card {{
             background-color: var(--bg-primary);
             border-color: var(--border-color);
             margin-bottom: 1.5rem;
         }}
-        
+
         .stat-card {{
             border-left: 4px solid #0d6efd;
         }}
-        
+
         .stat-card.success {{
             border-left-color: #198754;
         }}
-        
+
         .stat-card.warning {{
             border-left-color: #ffc107;
         }}
-        
+
         .stat-card.danger {{
             border-left-color: #dc3545;
         }}
-        
+
         .file-accordion .accordion-button {{
             background-color: var(--bg-secondary);
             color: var(--text-primary);
@@ -634,12 +646,12 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
             align-items: center;
             gap: 0.5rem;
         }}
-        
+
         .file-accordion .accordion-button:not(.collapsed) {{
             background-color: #0d6efd;
             color: white;
         }}
-        
+
         .file-name-text {{
             flex: 1;
             min-width: 0;
@@ -647,31 +659,31 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
             text-overflow: ellipsis;
             white-space: nowrap;
         }}
-        
+
         .badge-group {{
             display: flex;
             gap: 0.25rem;
             margin-left: auto;
             flex-shrink: 0;
         }}
-        
+
         .diff-table {{
             font-size: 0.9rem;
         }}
-        
+
         .diff-old {{
             background-color: var(--diff-old);
         }}
-        
+
         .diff-new {{
             background-color: var(--diff-new);
         }}
-        
+
         .badge-custom {{
             font-size: 0.75rem;
             padding: 0.35em 0.65em;
         }}
-        
+
         .badge-insert {{
             background-color: #198754;
             color: #ffffff;
@@ -679,7 +691,7 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
             padding: 0.35em 0.65em;
             border-radius: 0.25rem;
         }}
-        
+
         .badge-delete {{
             background-color: #dc3545;
             color: #ffffff;
@@ -687,7 +699,7 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
             padding: 0.35em 0.65em;
             border-radius: 0.25rem;
         }}
-        
+
         .badge-replace {{
             background-color: #0d6efd;
             color: #ffffff;
@@ -695,13 +707,13 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
             padding: 0.35em 0.65em;
             border-radius: 0.25rem;
         }}
-        
+
         .search-highlight {{
             background-color: yellow;
             color: black;
             font-weight: bold;
         }}
-        
+
         .filter-section {{
             position: sticky;
             top: 0;
@@ -711,12 +723,12 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
             border-bottom: 2px solid var(--border-color);
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }}
-        
+
         .chart-container {{
             position: relative;
             height: 300px;
         }}
-        
+
         @media print {{
             .filter-section, .no-print {{
                 display: none;
@@ -826,8 +838,7 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
         <div class="filter-section mb-3 no-print">
             <div class="row g-3 mb-3">
                 <div class="col-md-4">
-                    <input type="text" class="form-control" id="searchInput" 
-                           placeholder="🔍 差分内容を検索...">
+                    <input type="text" class="form-control" id="searchInput" placeholder="🔍 差分内容を検索...">
                 </div>
                 <div class="col-md-3">
                     <select class="form-select" id="sortSelect">
@@ -932,17 +943,17 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
             localStorage.setItem('theme', currentTheme === 'dark' ? 'light' : 'dark');
             updateCharts();
         }}
-        
+
         // テーマの復元
         const savedTheme = localStorage.getItem('theme') || 'light';
         document.documentElement.setAttribute('data-bs-theme', savedTheme);
-        
+
         // グラフデータ
         const fileData = {json.dumps(file_stats)};
         const sheetData = {json.dumps(list(sheet_stats.items()))};
-        
+
         let fileChart, sheetChart;
-        
+
         function getChartColors() {{
             const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
             return {{
@@ -950,10 +961,10 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                 gridColor: isDark ? '#495057' : '#dee2e6'
             }};
         }}
-        
+
         function updateCharts() {{
             const colors = getChartColors();
-            
+
             if (fileChart) {{
                 fileChart.options.scales.y.ticks.color = colors.textColor;
                 fileChart.options.scales.y.grid.color = colors.gridColor;
@@ -962,13 +973,13 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                 fileChart.options.plugins.legend.labels.color = colors.textColor;
                 fileChart.update();
             }}
-            
+
             if (sheetChart) {{
                 sheetChart.options.plugins.legend.labels.color = colors.textColor;
                 sheetChart.update();
             }}
         }}
-        
+
         // ファイル別グラフ
         const fileCtx = document.getElementById('fileChart').getContext('2d');
         fileChart = new Chart(fileCtx, {{
@@ -993,7 +1004,7 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                         grid: {{ color: getChartColors().gridColor }}
                     }},
                     x: {{
-                        ticks: {{ 
+                        ticks: {{
                             color: getChartColors().textColor,
                             maxRotation: 45,
                             minRotation: 45
@@ -1008,7 +1019,7 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                 }}
             }}
         }});
-        
+
         // シート別グラフ
         const sheetCtx = document.getElementById('sheetChart').getContext('2d');
         sheetChart = new Chart(sheetCtx, {{
@@ -1038,7 +1049,7 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                 }}
             }}
         }});
-        
+
         // シートフィルターチェックボックスを動的生成
         function initializeSheetFilters() {{
             const sheets = new Set();
@@ -1046,23 +1057,22 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                 const sheet = row.dataset.sheet;
                 if (sheet) sheets.add(sheet);
             }});
-            
+
             const container = document.getElementById('sheetFilterContainer');
             const sortedSheets = Array.from(sheets).sort((a, b) => a.localeCompare(b, 'ja'));
-            
+
             sortedSheets.forEach(sheet => {{
                 const div = document.createElement('div');
                 div.className = 'form-check';
                 div.innerHTML = `
-                    <input class="form-check-input sheet-filter" type="checkbox" value="${{sheet}}" 
-                           id="sheet-${{sheet.replace(/[^a-zA-Z0-9]/g, '-')}}" checked>
+                    <input class="form-check-input sheet-filter" type="checkbox" value="${{sheet}}" id="sheet-${{sheet.replace(/[^a-zA-Z0-9]/g, '-')}}" checked>
                     <label class="form-check-label" for="sheet-${{sheet.replace(/[^a-zA-Z0-9]/g, '-')}}">
                         ${{sheet}}
                     </label>
                 `;
                 container.appendChild(div);
             }});
-            
+
             // イベントリスナー追加
             container.querySelectorAll('.sheet-filter').forEach(cb => {{
                 cb.addEventListener('change', function() {{
@@ -1071,10 +1081,10 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                 }});
             }});
         }}
-        
+
         // 検索機能
         document.getElementById('searchInput').addEventListener('input', filterResults);
-        
+
         // フィルタ機能
         document.getElementById('fileFilter').addEventListener('change', filterResults);
         document.querySelectorAll('.status-filter').forEach(cb => {{
@@ -1089,20 +1099,20 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                 filterResults();
             }});
         }});
-        
+
         // 「すべて選択」チェックボックスのイベントリスナー
         document.getElementById('selectAllStatus').addEventListener('change', function() {{
             toggleAllCheckboxes('.status-filter', this.checked);
         }});
-        
+
         document.getElementById('selectAllTypes').addEventListener('change', function() {{
             toggleAllCheckboxes('.type-filter', this.checked);
         }});
-        
+
         document.getElementById('selectAllSheets').addEventListener('change', function() {{
             toggleAllCheckboxes('.sheet-filter', this.checked);
         }});
-        
+
         // すべてのチェックボックスを一括でオン/オフ
         function toggleAllCheckboxes(selector, checked) {{
             document.querySelectorAll(selector).forEach(cb => {{
@@ -1110,13 +1120,13 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
             }});
             filterResults();
         }}
-        
+
         // 「すべて選択」チェックボックスの状態を更新
         function updateSelectAllCheckbox(selectAllId, itemSelector) {{
             const allCheckboxes = document.querySelectorAll(itemSelector);
             const checkedCount = Array.from(allCheckboxes).filter(cb => cb.checked).length;
             const selectAllCheckbox = document.getElementById(selectAllId);
-            
+
             if (checkedCount === 0) {{
                 selectAllCheckbox.checked = false;
                 selectAllCheckbox.indeterminate = false;
@@ -1128,16 +1138,16 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                 selectAllCheckbox.indeterminate = true;
             }}
         }}
-        
+
         // ソート機能
         document.getElementById('sortSelect').addEventListener('change', function() {{
             sortAccordionItems(this.value);
         }});
-        
+
         function sortAccordionItems(sortType) {{
             const accordion = document.getElementById('diffAccordion');
             const items = Array.from(accordion.querySelectorAll('.accordion-item'));
-            
+
             items.sort((a, b) => {{
                 const nameA = a.dataset.fileName || '';
                 const nameB = b.dataset.fileName || '';
@@ -1145,7 +1155,7 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                 const diffB = parseInt(a.dataset.diffCount) || 0;
                 const orderA = parseInt(a.dataset.originalOrder) || 0;
                 const orderB = parseInt(b.dataset.originalOrder) || 0;
-                
+
                 switch(sortType) {{
                     case 'name-asc':
                         return nameA.localeCompare(nameB, 'ja');
@@ -1161,74 +1171,74 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                         return 0;
                 }}
             }});
-            
+
             // アコーディオンを再構築
             items.forEach(item => accordion.appendChild(item));
         }}
-        
+
         function filterResults() {{
             const searchText = document.getElementById('searchInput').value.toLowerCase();
             const selectedFile = document.getElementById('fileFilter').value;
-            
+
             // 選択されたステータスを取得
             const selectedStatuses = Array.from(document.querySelectorAll('.status-filter:checked'))
                 .map(cb => cb.value);
-            
+
             // 選択されたシートを取得
             const selectedSheets = Array.from(document.querySelectorAll('.sheet-filter:checked'))
                 .map(cb => cb.value);
-            
+
             // 選択された差分種別を取得
             const selectedTypes = Array.from(document.querySelectorAll('.type-filter:checked'))
                 .map(cb => cb.value);
-            
+
             document.querySelectorAll('.accordion-item').forEach(item => {{
                 const fileName = item.dataset.fileName;
                 const status = item.dataset.status || 'success';
                 let visible = true;
-                
+
                 // ステータスフィルタ
                 if (!selectedStatuses.includes(status)) {{
                     visible = false;
                 }}
-                
+
                 // ファイルフィルタ
                 if (visible && selectedFile && fileName !== selectedFile) {{
                     visible = false;
                 }}
-                
+
                 // シート・検索・差分種別フィルタ
                 if (visible) {{
                     const rows = item.querySelectorAll('tbody tr');
                     let hasVisibleRow = false;
-                    
+
                     rows.forEach(row => {{
                         const sheetName = row.dataset.sheet;
                         const changeType = row.dataset.type;
                         const oldValue = row.cells[3].textContent.toLowerCase();
                         const newValue = row.cells[4].textContent.toLowerCase();
-                        
+
                         let rowVisible = true;
-                        
+
                         // シートフィルタ（複数選択）
                         if (selectedSheets.length > 0 && !selectedSheets.includes(sheetName)) {{
                             rowVisible = false;
                         }}
-                        
+
                         // 差分種別フィルタ（複数選択）
                         if (rowVisible && selectedTypes.length > 0 && changeType && !selectedTypes.includes(changeType)) {{
                             rowVisible = false;
                         }}
-                        
+
                         // 検索フィルタ
                         if (rowVisible && searchText && !oldValue.includes(searchText) && !newValue.includes(searchText)) {{
                             rowVisible = false;
                         }}
-                        
+
                         row.style.display = rowVisible ? '' : 'none';
                         if (rowVisible) hasVisibleRow = true;
                     }});
-                    
+
                     // エラーアイテムの場合は常に表示（行がないため）
                     if (status === 'error' || rows.length === 0) {{
                         visible = true;
@@ -1236,35 +1246,35 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                         visible = hasVisibleRow;
                     }}
                 }}
-                
+
                 item.style.display = visible ? '' : 'none';
             }});
         }}
-        
+
         function resetFilters() {{
             document.getElementById('searchInput').value = '';
             document.getElementById('fileFilter').value = '';
             document.getElementById('sortSelect').value = 'name-asc';
-            
+
             // 全てのチェックボックスをチェック状態に
             document.querySelectorAll('.status-filter, .type-filter, .sheet-filter').forEach(cb => {{
                 cb.checked = true;
             }});
-            
+
             sortAccordionItems('name-asc');
             filterResults();
         }}
-        
+
         // ページ読み込み時の初期化
         initializeSheetFilters();
     </script>
 </body>
 </html>"""
-    
+
     # HTMLファイルを保存
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
-    
+
     print(f"\nHTMLレポートを生成しました: {output_path}")
 
 
@@ -1284,7 +1294,7 @@ def generate_sheet_filter_options(all_results: List[Dict]) -> str:
     for result in all_results:
         for change in result['changes']:
             sheets.add(change['sheet'])
-    
+
     options = []
     for sheet in sorted(sheets):
         name = html.escape(sheet)
@@ -1295,18 +1305,18 @@ def generate_sheet_filter_options(all_results: List[Dict]) -> str:
 def generate_accordion_items(all_results: List[Dict]) -> str:
     """差分詳細のアコーディオンアイテムを生成"""
     items = []
-    
+
     for i, result in enumerate(all_results):
         file_name = html.escape(result['base_name'])
         changes = result['changes']
         change_count = len(changes)
         status = result.get('status', 'success')
-        
+
         # 種類別カウント
         insert_count = sum(1 for c in changes if c.get('type') == 'insert')
         delete_count = sum(1 for c in changes if c.get('type') == 'delete')
         replace_count = sum(1 for c in changes if c.get('type') == 'replace')
-        
+
         # ステータスに応じてバッジとアイコンを設定
         if status == 'error':
             icon = 'x-circle'
@@ -1326,7 +1336,7 @@ def generate_accordion_items(all_results: List[Dict]) -> str:
             if replace_count > 0:
                 badges.append(f'<span class="badge badge-replace">{replace_count}変更</span>')
             badge_html = ''.join(badges)
-        
+
         # エラーの場合はエラー情報を表示
         if status == 'error':
             error_message = html.escape(result.get('error', '不明なエラー'))
@@ -1358,7 +1368,7 @@ def generate_accordion_items(all_results: List[Dict]) -> str:
                 old_val = html.escape(change['old'])
                 new_val = html.escape(change['new'])
                 diff_type = change.get('type', 'replace')
-                
+
                 # 差分タイプに応じたバッジとクラス
                 if diff_type == 'insert':
                     type_badge = '<span class="badge badge-insert">追加</span>'
@@ -1369,7 +1379,7 @@ def generate_accordion_items(all_results: List[Dict]) -> str:
                 else:
                     type_badge = '<span class="badge badge-replace">変更</span>'
                     row_class = 'diff-type-replace'
-                
+
                 table_rows.append(f'''
                     <tr data-sheet="{sheet}" data-type="{diff_type}" class="{row_class}">
                         <td>{idx}</td>
@@ -1380,21 +1390,20 @@ def generate_accordion_items(all_results: List[Dict]) -> str:
                         <td>{type_badge}</td>
                     </tr>
                 ''')
-            
+
             tables_html = '\n'.join(table_rows) if table_rows else '<tr><td colspan="6" class="text-center text-muted">差分なし</td></tr>'
-        
+
         item_html = f'''
             <div class="accordion-item" data-file-name="{file_name}" data-diff-count="{change_count}" data-original-order="{i}" data-status="{status}">
                 <h2 class="accordion-header">
-                    <button class="accordion-button collapsed" type="button" 
+                    <button class="accordion-button collapsed" type="button"
                             data-bs-toggle="collapse" data-bs-target="#collapse{i}">
                         <i class="bi bi-{icon} me-2"></i>
                         <span class="file-name-text">{file_name}</span>
                         <span class="badge-group">{badge_html}</span>
                     </button>
                 </h2>
-                <div id="collapse{i}" class="accordion-collapse collapse" 
-                     data-bs-parent="#diffAccordion">
+                <div id="collapse{i}" class="accordion-collapse collapse" data-bs-parent="#diffAccordion">
                     <div class="accordion-body">
                         <div class="table-responsive">
                             <table class="table table-sm table-hover diff-table">
@@ -1418,9 +1427,13 @@ def generate_accordion_items(all_results: List[Dict]) -> str:
             </div>
         '''
         items.append(item_html)
-    
+
     return '\n'.join(items)
 
+
+# ============================================================
+# メイン処理
+# ============================================================
 
 def main():
     """
@@ -1531,7 +1544,7 @@ def main():
 
             changes = compare_and_highlight_excel(old_file, new_file, output_file, highlight_color, compare_formulas)
             success_count += 1
-            
+
             # 結果を記録
             all_results.append({
                 'base_name': base_name,
@@ -1559,7 +1572,7 @@ def main():
 
     # 最終結果
     total_time = time.time() - main_start_time  # 全体の処理時間を計算
-    
+
     print(f"\n{'='*SEPARATOR_LENGTH}")
     print(f"処理完了")
     print(f"{'='*SEPARATOR_LENGTH}")
