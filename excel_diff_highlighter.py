@@ -824,12 +824,12 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
 
         <!-- フィルタ・検索セクション -->
         <div class="filter-section mb-3 no-print">
-            <div class="row g-3">
-                <div class="col-md-3">
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
                     <input type="text" class="form-control" id="searchInput" 
                            placeholder="🔍 差分内容を検索...">
                 </div>
-                <div class="col-md-2">
+                <div class="col-md-3">
                     <select class="form-select" id="sortSelect">
                         <option value="name-asc">ファイル名 (昇順)</option>
                         <option value="name-desc">ファイル名 (降順)</option>
@@ -838,22 +838,80 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                         <option value="original">元の順序</option>
                     </select>
                 </div>
-                <div class="col-md-2">
+                <div class="col-md-3">
                     <select class="form-select" id="fileFilter">
                         <option value="">すべてのファイル</option>
                         {generate_file_filter_options(all_results)}
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <select class="form-select" id="sheetFilter">
-                        <option value="">すべてのシート</option>
-                        {generate_sheet_filter_options(all_results)}
                     </select>
                 </div>
                 <div class="col-md-2">
                     <button class="btn btn-secondary w-100" onclick="resetFilters()">
                         <i class="bi bi-arrow-counterclockwise"></i> リセット
                     </button>
+                </div>
+            </div>
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-body py-2">
+                            <small class="text-muted d-block mb-1">シートフィルター（複数選択可）</small>
+                            <div class="form-check mb-1" style="border-bottom: 1px solid var(--border-color); padding-bottom: 0.25rem;">
+                                <input class="form-check-input" type="checkbox" id="selectAllSheets" checked>
+                                <label class="form-check-label fw-bold" for="selectAllSheets">すべて選択</label>
+                            </div>
+                            <div id="sheetFilterContainer" style="max-height: 100px; overflow-y: auto;">
+                                <!-- JavaScriptで動的に生成 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-body py-2">
+                            <small class="text-muted d-block mb-1">ステータスフィルター（複数選択可）</small>
+                            <div class="form-check mb-1" style="border-bottom: 1px solid var(--border-color); padding-bottom: 0.25rem;">
+                                <input class="form-check-input" type="checkbox" id="selectAllStatus" checked>
+                                <label class="form-check-label fw-bold" for="selectAllStatus">すべて選択</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input status-filter" type="checkbox" value="success" id="filterSuccess" checked>
+                                <label class="form-check-label" for="filterSuccess">成功</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input status-filter" type="checkbox" value="error" id="filterError" checked>
+                                <label class="form-check-label" for="filterError">エラー</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-body py-2">
+                            <small class="text-muted d-block mb-1">差分種別フィルター（複数選択可）</small>
+                            <div class="form-check mb-1" style="border-bottom: 1px solid var(--border-color); padding-bottom: 0.25rem;">
+                                <input class="form-check-input" type="checkbox" id="selectAllTypes" checked>
+                                <label class="form-check-label fw-bold" for="selectAllTypes">すべて選択</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input type-filter" type="checkbox" value="insert" id="filterInsert" checked>
+                                <label class="form-check-label" for="filterInsert">
+                                    <span class="badge badge-insert">追加</span>
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input type-filter" type="checkbox" value="delete" id="filterDelete" checked>
+                                <label class="form-check-label" for="filterDelete">
+                                    <span class="badge badge-delete">削除</span>
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input type-filter" type="checkbox" value="replace" id="filterReplace" checked>
+                                <label class="form-check-label" for="filterReplace">
+                                    <span class="badge badge-replace">変更</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -981,15 +1039,95 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
             }}
         }});
         
+        // シートフィルターチェックボックスを動的生成
+        function initializeSheetFilters() {{
+            const sheets = new Set();
+            document.querySelectorAll('tbody tr').forEach(row => {{
+                const sheet = row.dataset.sheet;
+                if (sheet) sheets.add(sheet);
+            }});
+            
+            const container = document.getElementById('sheetFilterContainer');
+            const sortedSheets = Array.from(sheets).sort((a, b) => a.localeCompare(b, 'ja'));
+            
+            sortedSheets.forEach(sheet => {{
+                const div = document.createElement('div');
+                div.className = 'form-check';
+                div.innerHTML = `
+                    <input class="form-check-input sheet-filter" type="checkbox" value="${{sheet}}" 
+                           id="sheet-${{sheet.replace(/[^a-zA-Z0-9]/g, '-')}}" checked>
+                    <label class="form-check-label" for="sheet-${{sheet.replace(/[^a-zA-Z0-9]/g, '-')}}">
+                        ${{sheet}}
+                    </label>
+                `;
+                container.appendChild(div);
+            }});
+            
+            // イベントリスナー追加
+            container.querySelectorAll('.sheet-filter').forEach(cb => {{
+                cb.addEventListener('change', function() {{
+                    updateSelectAllCheckbox('selectAllSheets', '.sheet-filter');
+                    filterResults();
+                }});
+            }});
+        }}
+        
         // 検索機能
-        document.getElementById('searchInput').addEventListener('input', function() {{
-            const searchText = this.value.toLowerCase();
-            filterResults();
-        }});
+        document.getElementById('searchInput').addEventListener('input', filterResults);
         
         // フィルタ機能
         document.getElementById('fileFilter').addEventListener('change', filterResults);
-        document.getElementById('sheetFilter').addEventListener('change', filterResults);
+        document.querySelectorAll('.status-filter').forEach(cb => {{
+            cb.addEventListener('change', function() {{
+                updateSelectAllCheckbox('selectAllStatus', '.status-filter');
+                filterResults();
+            }});
+        }});
+        document.querySelectorAll('.type-filter').forEach(cb => {{
+            cb.addEventListener('change', function() {{
+                updateSelectAllCheckbox('selectAllTypes', '.type-filter');
+                filterResults();
+            }});
+        }});
+        
+        // 「すべて選択」チェックボックスのイベントリスナー
+        document.getElementById('selectAllStatus').addEventListener('change', function() {{
+            toggleAllCheckboxes('.status-filter', this.checked);
+        }});
+        
+        document.getElementById('selectAllTypes').addEventListener('change', function() {{
+            toggleAllCheckboxes('.type-filter', this.checked);
+        }});
+        
+        document.getElementById('selectAllSheets').addEventListener('change', function() {{
+            toggleAllCheckboxes('.sheet-filter', this.checked);
+        }});
+        
+        // すべてのチェックボックスを一括でオン/オフ
+        function toggleAllCheckboxes(selector, checked) {{
+            document.querySelectorAll(selector).forEach(cb => {{
+                cb.checked = checked;
+            }});
+            filterResults();
+        }}
+        
+        // 「すべて選択」チェックボックスの状態を更新
+        function updateSelectAllCheckbox(selectAllId, itemSelector) {{
+            const allCheckboxes = document.querySelectorAll(itemSelector);
+            const checkedCount = Array.from(allCheckboxes).filter(cb => cb.checked).length;
+            const selectAllCheckbox = document.getElementById(selectAllId);
+            
+            if (checkedCount === 0) {{
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+            }} else if (checkedCount === allCheckboxes.length) {{
+                selectAllCheckbox.checked = true;
+                selectAllCheckbox.indeterminate = false;
+            }} else {{
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = true;
+            }}
+        }}
         
         // ソート機能
         document.getElementById('sortSelect').addEventListener('change', function() {{
@@ -1004,7 +1142,7 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                 const nameA = a.dataset.fileName || '';
                 const nameB = b.dataset.fileName || '';
                 const diffA = parseInt(a.dataset.diffCount) || 0;
-                const diffB = parseInt(b.dataset.diffCount) || 0;
+                const diffB = parseInt(a.dataset.diffCount) || 0;
                 const orderA = parseInt(a.dataset.originalOrder) || 0;
                 const orderB = parseInt(b.dataset.originalOrder) || 0;
                 
@@ -1031,34 +1169,59 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
         function filterResults() {{
             const searchText = document.getElementById('searchInput').value.toLowerCase();
             const selectedFile = document.getElementById('fileFilter').value;
-            const selectedSheet = document.getElementById('sheetFilter').value;
+            
+            // 選択されたステータスを取得
+            const selectedStatuses = Array.from(document.querySelectorAll('.status-filter:checked'))
+                .map(cb => cb.value);
+            
+            // 選択されたシートを取得
+            const selectedSheets = Array.from(document.querySelectorAll('.sheet-filter:checked'))
+                .map(cb => cb.value);
+            
+            // 選択された差分種別を取得
+            const selectedTypes = Array.from(document.querySelectorAll('.type-filter:checked'))
+                .map(cb => cb.value);
             
             document.querySelectorAll('.accordion-item').forEach(item => {{
                 const fileName = item.dataset.fileName;
+                const status = item.dataset.status || 'success';
                 let visible = true;
                 
-                // ファイルフィルタ
-                if (selectedFile && fileName !== selectedFile) {{
+                // ステータスフィルタ
+                if (!selectedStatuses.includes(status)) {{
                     visible = false;
                 }}
                 
-                // シート・検索フィルタ
-                if (visible && (selectedSheet || searchText)) {{
+                // ファイルフィルタ
+                if (visible && selectedFile && fileName !== selectedFile) {{
+                    visible = false;
+                }}
+                
+                // シート・検索・差分種別フィルタ
+                if (visible) {{
                     const rows = item.querySelectorAll('tbody tr');
                     let hasVisibleRow = false;
                     
                     rows.forEach(row => {{
                         const sheetName = row.dataset.sheet;
+                        const changeType = row.dataset.type;
                         const oldValue = row.cells[3].textContent.toLowerCase();
                         const newValue = row.cells[4].textContent.toLowerCase();
                         
                         let rowVisible = true;
                         
-                        if (selectedSheet && sheetName !== selectedSheet) {{
+                        // シートフィルタ（複数選択）
+                        if (selectedSheets.length > 0 && !selectedSheets.includes(sheetName)) {{
                             rowVisible = false;
                         }}
                         
-                        if (searchText && !oldValue.includes(searchText) && !newValue.includes(searchText)) {{
+                        // 差分種別フィルタ（複数選択）
+                        if (rowVisible && selectedTypes.length > 0 && changeType && !selectedTypes.includes(changeType)) {{
+                            rowVisible = false;
+                        }}
+                        
+                        // 検索フィルタ
+                        if (rowVisible && searchText && !oldValue.includes(searchText) && !newValue.includes(searchText)) {{
                             rowVisible = false;
                         }}
                         
@@ -1066,7 +1229,12 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
                         if (rowVisible) hasVisibleRow = true;
                     }});
                     
-                    visible = hasVisibleRow;
+                    // エラーアイテムの場合は常に表示（行がないため）
+                    if (status === 'error' || rows.length === 0) {{
+                        visible = true;
+                    }} else {{
+                        visible = hasVisibleRow;
+                    }}
                 }}
                 
                 item.style.display = visible ? '' : 'none';
@@ -1076,11 +1244,19 @@ def generate_html_report(all_results: List[Dict], output_path: str, color_name: 
         function resetFilters() {{
             document.getElementById('searchInput').value = '';
             document.getElementById('fileFilter').value = '';
-            document.getElementById('sheetFilter').value = '';
             document.getElementById('sortSelect').value = 'name-asc';
+            
+            // 全てのチェックボックスをチェック状態に
+            document.querySelectorAll('.status-filter, .type-filter, .sheet-filter').forEach(cb => {{
+                cb.checked = true;
+            }});
+            
             sortAccordionItems('name-asc');
             filterResults();
         }}
+        
+        // ページ読み込み時の初期化
+        initializeSheetFilters();
     </script>
 </body>
 </html>"""
@@ -1195,7 +1371,7 @@ def generate_accordion_items(all_results: List[Dict]) -> str:
                     row_class = 'diff-type-replace'
                 
                 table_rows.append(f'''
-                    <tr data-sheet="{sheet}" class="{row_class}">
+                    <tr data-sheet="{sheet}" data-type="{diff_type}" class="{row_class}">
                         <td>{idx}</td>
                         <td><span class="badge bg-secondary">{sheet}</span></td>
                         <td><code>{cell}</code></td>
@@ -1208,7 +1384,7 @@ def generate_accordion_items(all_results: List[Dict]) -> str:
             tables_html = '\n'.join(table_rows) if table_rows else '<tr><td colspan="6" class="text-center text-muted">差分なし</td></tr>'
         
         item_html = f'''
-            <div class="accordion-item" data-file-name="{file_name}" data-diff-count="{change_count}" data-original-order="{i}">
+            <div class="accordion-item" data-file-name="{file_name}" data-diff-count="{change_count}" data-original-order="{i}" data-status="{status}">
                 <h2 class="accordion-header">
                     <button class="accordion-button collapsed" type="button" 
                             data-bs-toggle="collapse" data-bs-target="#collapse{i}">
