@@ -306,9 +306,12 @@ def apply_blue_color_to_differences(cell, old_text: str, new_text: str, highligh
     original_font = cell.font
     original_number_format = cell.number_format  # 数値書式を保存
     
-    # 日付や数値セルの場合は書式を保持するため、セル全体の色を変更
-    # number_formatが'General'でない場合は、特殊な書式（日付、数値、パーセントなど）と判断
-    if original_number_format and original_number_format != 'General':
+    # 数式セルの場合は、セル全体の色を変更（リッチテキストを使うと数式が失われる）
+    # また、日付や数値セルの場合も書式を保持するため、セル全体の色を変更
+    has_formula = cell.value and isinstance(cell.value, str) and cell.value.startswith('=')
+    has_special_format = original_number_format and original_number_format != 'General'
+    
+    if has_formula or has_special_format:
         # セル全体のフォント色を変更（リッチテキストを使わない）
         from openpyxl.styles import Font
         from copy import copy
@@ -316,7 +319,7 @@ def apply_blue_color_to_differences(cell, old_text: str, new_text: str, highligh
         new_font = copy(original_font)
         new_font.color = openpyxl.styles.colors.Color(rgb=highlight_color)
         cell.font = new_font
-        # number_formatは自動的に保持される
+        # 数式とnumber_formatは自動的に保持される
         return diff_type
 
     # RichTextオブジェクトを作成
@@ -398,7 +401,7 @@ def apply_blue_color_to_differences(cell, old_text: str, new_text: str, highligh
     return diff_type
 
 
-def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_file_path: str, highlight_color: str = DEFAULT_HIGHLIGHT_COLOR, compare_formulas: bool = False) -> List[Dict]:
+def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_file_path: str, highlight_color: str = DEFAULT_HIGHLIGHT_COLOR, compare_formulas: bool = False, create_summary: bool = False) -> List[Dict]:
     """
     2つのExcelファイルを比較し、差分を指定色でハイライト
 
@@ -408,6 +411,7 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
         output_file_path: 出力ファイルのパス
         highlight_color: ハイライト色（aRGB形式の16進数、デフォルトは青）
         compare_formulas: Trueの場合は数式を比較、Falseの場合は表示値を比較
+        create_summary: Trueの場合は差分サマリーシートを作成（デフォルトはFalse）
 
     Returns:
         changes_log: 変更履歴のリスト
@@ -420,7 +424,9 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
     # 処理開始時刻を記録
     start_time = time.time()
 
-    # ファイルを開く（compare_formulasがTrueの場合は数式を保持、Falseの場合は表示値のみ）
+    # ファイルを開く
+    # 古いファイル: 比較用に値を取得（compare_formulasに応じて数式または表示値）
+    # 新しいファイル: 出力用に数式を保持するため常にdata_only=False
     try:
         old_wb = openpyxl.load_workbook(old_file_path, data_only=not compare_formulas)
     except Exception as e:
@@ -428,11 +434,25 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
         raise
 
     try:
-        new_wb = openpyxl.load_workbook(new_file_path, data_only=not compare_formulas)
+        # 新ファイルは数式を保持するため、常にdata_only=False
+        # これにより数式セルの日付書式が維持される
+        new_wb = openpyxl.load_workbook(new_file_path, data_only=False)
     except Exception as e:
         print(f"エラー: 新ファイルを開けませんでした: {e}")
         old_wb.close()
         raise
+    
+    # 比較用に表示値を取得するための別ワークブックを開く（表示値モードの場合）
+    if not compare_formulas:
+        try:
+            new_wb_values = openpyxl.load_workbook(new_file_path, data_only=True)
+        except Exception as e:
+            print(f"エラー: 新ファイル（表示値用）を開けませんでした: {e}")
+            old_wb.close()
+            new_wb.close()
+            raise
+    else:
+        new_wb_values = None
 
     changes_log = []  # 変更履歴を記録
 
@@ -444,6 +464,8 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
 
         old_sheet = old_wb[sheet_name]
         new_sheet = new_wb[sheet_name]
+        # 表示値用シート（表示値モードの場合のみ）
+        new_sheet_values = new_wb_values[sheet_name] if new_wb_values else None
 
         print(f"\nシート '{sheet_name}' を処理中...")
         sheet_changes = 0
@@ -458,6 +480,8 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
             for col in range(1, new_sheet.max_column + 1):
                 old_cell = old_sheet.cell(row, col)
                 new_cell = new_sheet.cell(row, col)
+                # 表示値用セル（表示値モードの場合のみ）
+                new_cell_value = new_sheet_values.cell(row, col) if new_sheet_values else new_cell
 
                 # 結合セルの処理
                 from openpyxl.cell.cell import MergedCell
@@ -467,7 +491,8 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
                     continue
 
                 old_value = get_cell_value_as_string(old_cell)
-                new_value = get_cell_value_as_string(new_cell)
+                # 比較には表示値を使用（表示値モードの場合）
+                new_value = get_cell_value_as_string(new_cell_value)
 
                 # 両方空セルの場合はスキップ（パフォーマンス向上）
                 if not old_value and not new_value:
@@ -478,6 +503,7 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
                 if old_value != new_value:
                     diff_type = 'equal'
                     if new_value:
+                        # ハイライトは出力用セル（数式保持）に適用
                         diff_type = apply_blue_color_to_differences(new_cell, old_value, new_value, highlight_color)
                     elif old_value:
                         # 新値が空の場合は削除
@@ -500,8 +526,8 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
                 if progress >= last_progress + PROGRESS_DISPLAY_INTERVAL and progress < 100:
                     print(f"  進行状況: {progress}% ({processed_cells}/{total_cells} セル)")
                     last_progress = progress
-    # 差分サマリーシートを作成
-    if changes_log:
+    # 差分サマリーシートを作成（オプション）
+    if create_summary and changes_log:
         print(f"\n差分サマリーシートを作成中...")
         summary_sheet = new_wb.create_sheet(SUMMARY_SHEET_NAME, 0)  # 最初のシートとして追加
 
@@ -556,6 +582,8 @@ def compare_and_highlight_excel(old_file_path: str, new_file_path: str, output_f
 
     old_wb.close()
     new_wb.close()
+    if new_wb_values:
+        new_wb_values.close()
 
     return changes_log
 
@@ -1485,6 +1513,17 @@ def main():
     mode_name = "数式" if compare_formulas else "表示値"
     print(f"選択されたモード: {mode_name}\n")
 
+    # 差分サマリーシートの作成選択
+    print("差分サマリーシートを作成しますか？")
+    print("1. 作成しない（デフォルト）")
+    print("2. 作成する")
+
+    summary_choice = input("選択 (1-2, デフォルト: 1): ").strip()
+    create_summary = (summary_choice == '2')
+
+    summary_status = "作成する" if create_summary else "作成しない"
+    print(f"差分サマリーシート: {summary_status}\n")
+
     # フォルダ配下の全ファイルを一括処理
     print("旧バージョンのフォルダを指定してください")
     old_directory = input("旧バージョンのフォルダパス: ").strip().strip('"').strip("'")
@@ -1558,7 +1597,7 @@ def main():
             output_filename = new_file_path.stem + OUTPUT_FILE_SUFFIX + new_file_path.suffix
             output_file = str(output_path / output_filename)
 
-            changes = compare_and_highlight_excel(old_file, new_file, output_file, highlight_color, compare_formulas)
+            changes = compare_and_highlight_excel(old_file, new_file, output_file, highlight_color, compare_formulas, create_summary)
             success_count += 1
 
             # 結果を記録
