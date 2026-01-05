@@ -302,8 +302,22 @@ def apply_blue_color_to_differences(cell, old_text: str, new_text: str, highligh
     if not differences:
         return diff_type
 
-    # 元のセルのフォント情報を取得
+    # 元のセルのフォント情報と書式を保存
     original_font = cell.font
+    original_number_format = cell.number_format  # 数値書式を保存
+    
+    # 日付や数値セルの場合は書式を保持するため、セル全体の色を変更
+    # number_formatが'General'でない場合は、特殊な書式（日付、数値、パーセントなど）と判断
+    if original_number_format and original_number_format != 'General':
+        # セル全体のフォント色を変更（リッチテキストを使わない）
+        from openpyxl.styles import Font
+        from copy import copy
+        
+        new_font = copy(original_font)
+        new_font.color = openpyxl.styles.colors.Color(rgb=highlight_color)
+        cell.font = new_font
+        # number_formatは自動的に保持される
+        return diff_type
 
     # RichTextオブジェクトを作成
     rich_text_parts = []
@@ -378,6 +392,8 @@ def apply_blue_color_to_differences(cell, old_text: str, new_text: str, highligh
     # セルにRichTextを設定
     if rich_text_parts:
         cell.value = CellRichText(*rich_text_parts)
+        # 数値書式を復元（日付や数値の表示形式を維持）
+        cell.number_format = original_number_format
 
     return diff_type
 
